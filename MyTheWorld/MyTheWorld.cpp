@@ -6,7 +6,7 @@
 #include <string>
 #include <windows.h>
 
-
+// set event for resource
 using namespace std;
 
 void MoveOutputToPos(int x,int y,char* c,bool bString);
@@ -26,14 +26,20 @@ CRITICAL_SECTION cs;
 const struct Planet& InitPlanet(int type, int resource,int speed,int index);
 void PlanetSpin(const struct Planet &p,int spinInterval,int picType);
 void PlanetMove(struct Planet &p);
+void UpdatePlanetResource(struct Planet &p);
 
 DWORD WINAPI ThreadProc(LPVOID lpParameter);
+DWORD WINAPI UpdateResourceProc(LPVOID lpParameter);
 int nMaxResource = 0;
+HANDLE hEvent;
 
 int _tmain(int argc, _TCHAR* argv[])
 {  
     CONSOLE_SCREEN_BUFFER_INFO bInfo; 
     GetConsoleScreenBufferInfo(hOut, &bInfo );
+ 
+    hEvent = CreateEvent( NULL , FALSE , FALSE , NULL );
+
     InitializeCriticalSection(&cs);
 
     nMaxResource = bInfo.dwSize.X;
@@ -48,25 +54,43 @@ int _tmain(int argc, _TCHAR* argv[])
                              &Planet1, 
                              STACK_SIZE_PARAM_IS_A_RESERVATION, 
                              NULL);
- 
-    HANDLE  hThread2 = CreateThread(0, 
+
+    HANDLE  hThreadUpdate = CreateThread(0, 
                              16 * 1024L, 
-                             ThreadProc, 
-                             &Planet2, 
+                             UpdateResourceProc, 
+                             &homePlanet, 
                              STACK_SIZE_PARAM_IS_A_RESERVATION, 
                              NULL);
-
+   
     while(true)
     {
         PlanetSpin(homePlanet,80,nSpinType);  
         nSpinType++;
     }
      
+    CloseHandle(hThread1);
+    CloseHandle(hThreadUpdate);
+    CloseHandle(hEvent);
     DeleteCriticalSection(&cs);
     system("pause");
 	return 0;
 }
 
+void UpdatePlanetResource(struct Planet &p)
+{ 
+    char cRes[3];
+    itoa(p.resource,cRes,10);
+
+    if( p.type == 1 ) 
+    { 
+        MoveOutputToPos(2,0,cRes,true); 
+    }
+    else
+    {
+        MoveOutputToPos(1,p.index*3,cRes,true);  
+    } 
+}
+ 
 void PlanetMove(struct Planet &p)
 { 
     p.resource++;
@@ -74,10 +98,11 @@ void PlanetMove(struct Planet &p)
     memset(cLine,0,100*sizeof(char));
     memset(cLine,'-',p.resource*sizeof(char));
 
+
     if( p.resource == nMaxResource ) 
     {
         p.resource = 0;
-        memset(cLine,0,100*sizeof(char)); 
+        memset(cLine,' ',nMaxResource*sizeof(char)); 
     } 
     
     MoveOutputToPos(0,p.index*3+1,cLine,true); 
@@ -93,7 +118,7 @@ void PlanetSpin(const struct Planet &p,int spinInterval,int picType)
         MoveOutputToPos(0,1,&spin[picType%4],false); 
         MoveOutputToPos(1,0,&spin[picType%4],false); 
         MoveOutputToPos(1,1,&spin[picType%4],false);
-       
+ 
         ::Sleep(spinInterval);
     }
     else
@@ -102,10 +127,10 @@ void PlanetSpin(const struct Planet &p,int spinInterval,int picType)
         
         MoveOutputToPos(0,p.index*3-1,&sep,false);  
         MoveOutputToPos(0,p.index*3,&sep,false);    
-
+        
 
         MoveOutputToPos(p.resource,p.index*3+1,&spin[picType%4],false); 
-  
+        
         ::Sleep(spinInterval);
     }
 }
@@ -126,12 +151,12 @@ void MoveOutputToPos(int x,int y,char* c,bool bString)
     EnterCriticalSection(&cs);
     CONSOLE_SCREEN_BUFFER_INFO csbiInfo; 
     csbiInfo.dwCursorPosition.X = x;
-    csbiInfo.dwCursorPosition.Y = y;
+    csbiInfo.dwCursorPosition.Y = y; 
 
     if (!SetConsoleCursorPosition(hOut,csbiInfo.dwCursorPosition)) 
     {
         printf("SetConsoleCursorPosition error!!!!! \r\n"); 
-         
+        LeaveCriticalSection(&cs);
         return;
     }
 
@@ -151,10 +176,28 @@ DWORD WINAPI ThreadProc(LPVOID lpParameter)
     while(true)
     {
         PlanetMove(*p);
-        PlanetSpin(*p,100,nSpinType);
+        PlanetSpin(*p,500,nSpinType);
+ 
+        UpdatePlanetResource(*p);
+        SetEvent(hEvent);
 
         nSpinType++;
     }
         
+    return 1;
+}
+
+DWORD WINAPI UpdateResourceProc(LPVOID lpParameter)
+{
+    struct Planet* p = (struct Planet*)lpParameter;
+    while(true)
+    {
+        DWORD dStatus = WaitForSingleObject(hEvent,1000*30);
+        if ( dStatus == WAIT_OBJECT_0 )
+        {
+            p->resource -= 1;
+            UpdatePlanetResource(*p);
+        }
+    }
     return 1;
 }
