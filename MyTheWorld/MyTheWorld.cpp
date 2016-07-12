@@ -5,7 +5,7 @@
 #include <iostream>
 #include <string>
 #include <windows.h>
-
+                                                                                                                                                                                    
 // set event for resource
 using namespace std;
 
@@ -32,12 +32,16 @@ DWORD WINAPI ThreadProc(LPVOID lpParameter);
 DWORD WINAPI UpdateResourceProc(LPVOID lpParameter);
 int nMaxResource = 0;
 HANDLE hEvent;
+bool bFin;
+
+HANDLE ghMutex; 
 
 int _tmain(int argc, _TCHAR* argv[])
 {  
     CONSOLE_SCREEN_BUFFER_INFO bInfo; 
     GetConsoleScreenBufferInfo(hOut, &bInfo );
  
+    bFin = false;
     hEvent = CreateEvent( NULL , FALSE , FALSE , NULL );
 
     InitializeCriticalSection(&cs);
@@ -54,23 +58,33 @@ int _tmain(int argc, _TCHAR* argv[])
                              &Planet1, 
                              STACK_SIZE_PARAM_IS_A_RESERVATION, 
                              NULL);
-
+    /*
     HANDLE  hThreadUpdate = CreateThread(0, 
                              16 * 1024L, 
                              UpdateResourceProc, 
                              &homePlanet, 
                              STACK_SIZE_PARAM_IS_A_RESERVATION, 
                              NULL);
+    */
+    ghMutex = CreateMutex(NULL,FALSE,NULL);             
    
     while(true)
     {
         PlanetSpin(homePlanet,80,nSpinType);  
         nSpinType++;
-    }
+        DWORD dStatus = WaitForSingleObject(hEvent,5000);
+        if ( dStatus == WAIT_OBJECT_0 )
+        {
+            homePlanet.resource -= 1;
+            UpdatePlanetResource(homePlanet);
+            // ResetEvent(hEvent); If the senconde para. is TRUE
+        }
+    } 
      
     CloseHandle(hThread1);
-    CloseHandle(hThreadUpdate);
+    //CloseHandle(hThreadUpdate);
     CloseHandle(hEvent);
+    CloseHandle(ghMutex);
     DeleteCriticalSection(&cs);
     system("pause");
 	return 0;
@@ -92,20 +106,23 @@ void UpdatePlanetResource(struct Planet &p)
 }
  
 void PlanetMove(struct Planet &p)
-{ 
-    p.resource++;
+{  
     char cLine[100];
-    memset(cLine,0,100*sizeof(char));
-    memset(cLine,'-',p.resource*sizeof(char));
+    memset(cLine,0,100*sizeof(char)); 
 
-
-    if( p.resource == nMaxResource ) 
+    if( p.resource < nMaxResource-1 ) 
     {
-        p.resource = 0;
-        memset(cLine,' ',nMaxResource*sizeof(char)); 
-    } 
-    
-    MoveOutputToPos(0,p.index*3+1,cLine,true); 
+        p.resource++;
+        memset(cLine,'-',p.resource*sizeof(char));
+        //p.resource = 0;
+        //memset(cLine,' ',nMaxResource*sizeof(char)); 
+        MoveOutputToPos(0,p.index*3+1,cLine,true); 
+        
+        UpdatePlanetResource(p);
+        SetEvent(hEvent);
+
+    }  
+   
 }
 
 void PlanetSpin(const struct Planet &p,int spinInterval,int picType)
@@ -148,11 +165,13 @@ const struct Planet& InitPlanet(int type, int resource,int speed,int index)
 
 void MoveOutputToPos(int x,int y,char* c,bool bString)
 {     
-    EnterCriticalSection(&cs);
     CONSOLE_SCREEN_BUFFER_INFO csbiInfo; 
     csbiInfo.dwCursorPosition.X = x;
     csbiInfo.dwCursorPosition.Y = y; 
 
+   
+#if 0
+    EnterCriticalSection(&cs);
     if (!SetConsoleCursorPosition(hOut,csbiInfo.dwCursorPosition)) 
     {
         printf("SetConsoleCursorPosition error!!!!! \r\n"); 
@@ -165,6 +184,29 @@ void MoveOutputToPos(int x,int y,char* c,bool bString)
     else
         printf("%s",c);
     LeaveCriticalSection(&cs);
+#endif
+
+    DWORD dStatus = WaitForSingleObject(ghMutex,1000*30);
+    if ( dStatus == WAIT_OBJECT_0 )
+    {
+        if (!SetConsoleCursorPosition(hOut,csbiInfo.dwCursorPosition)) 
+        {
+            printf("SetConsoleCursorPosition error!!!!! \r\n"); 
+            ReleaseMutex(ghMutex);
+            return;
+        }
+
+        if(!bString)
+            printf("%c",c[0]); 
+        else
+            printf("%s",c);
+        ReleaseMutex(ghMutex);
+    }
+    else
+    {
+        ReleaseMutex(ghMutex);
+    }
+
 }
 
 DWORD WINAPI ThreadProc(LPVOID lpParameter)
@@ -177,11 +219,7 @@ DWORD WINAPI ThreadProc(LPVOID lpParameter)
     {
         PlanetMove(*p);
         PlanetSpin(*p,500,nSpinType);
- 
-        UpdatePlanetResource(*p);
-        SetEvent(hEvent);
-
-        nSpinType++;
+        nSpinType++; 
     }
         
     return 1;
@@ -189,7 +227,7 @@ DWORD WINAPI ThreadProc(LPVOID lpParameter)
 
 DWORD WINAPI UpdateResourceProc(LPVOID lpParameter)
 {
-    struct Planet* p = (struct Planet*)lpParameter;
+    struct Planet* p = (struct Planet*)lpParameter; 
     while(true)
     {
         DWORD dStatus = WaitForSingleObject(hEvent,1000*30);
